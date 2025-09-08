@@ -120,7 +120,6 @@ private:
 	unique_ptr<DuckLakeNameMapEntry> MapHiveColumn(ParquetFileMetadata &file_metadata, const DuckLakeFieldId &field_id,
 	                                               DuckLakeDataFile &result, const Value &hive_value);
 
-	Value GetStatsValue(string name, Value val);
 	void CheckMatchingType(const LogicalType &type, ParquetColumn &column);
 
 private:
@@ -227,13 +226,6 @@ FROM parquet_schema(%s)
 		auto &filename = file->filename;
 		parquet_files.emplace(filename, std::move(file));
 	}
-}
-
-Value DuckLakeFileProcessor::GetStatsValue(string name, Value val) {
-	child_list_t<Value> children;
-	children.emplace_back("key", Value(std::move(name)));
-	children.emplace_back("value", std::move(val));
-	return Value::STRUCT(std::move(children));
 }
 
 void DuckLakeFileProcessor::ReadParquetStats(const string &glob) {
