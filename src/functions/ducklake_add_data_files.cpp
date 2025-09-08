@@ -74,10 +74,6 @@ static unique_ptr<GlobalTableFunctionState> DuckLakeAddDataFilesInit(ClientConte
 	return make_uniq<DuckLakeAddDataFilesState>();
 }
 
-struct ParquetColumnStats {
-	vector<Value> column_stats;
-};
-
 struct ParquetColumn {
 	idx_t column_id;
 	string name;
@@ -87,7 +83,7 @@ struct ParquetColumn {
 	optional_idx precision;
 	optional_idx field_id;
 	string logical_type;
-	vector<ParquetColumnStats> column_stats;
+	vector<DuckLakeColumnStats> column_stats;
 
 	vector<unique_ptr<ParquetColumn>> child_columns;
 };
@@ -264,22 +260,25 @@ FROM parquet_metadata(%s)
 			throw InvalidInputException("Column id not found in Parquet map?");
 		}
 		auto &column = column_entry->second.get();
-		ParquetColumnStats stats;
+		DuckLakeColumnStats stats(LogicalType::SQLNULL); // FIXME: Use the correct type here
 
 		if (!row.IsNull(2)) {
 			// stats.column_stats.push_back(GetStatsValue("value_count", row.GetValue<string>(2)));
 		}
 		if (!row.IsNull(3)) {
-			stats.column_stats.push_back(GetStatsValue("min", row.GetValue<string>(3)));
+			stats.has_min = true;
+			stats.min = row.GetValue<string>(3);
 		}
 		if (!row.IsNull(4)) {
-			stats.column_stats.push_back(GetStatsValue("max", row.GetValue<string>(4)));
+			stats.has_max = true;
+			stats.max = row.GetValue<string>(4);
 		}
 		if (!row.IsNull(5)) {
-			stats.column_stats.push_back(GetStatsValue("null_count", row.GetValue<string>(5)));
+			stats.has_null_count = true;
+			stats.null_count = StringUtil::ToUnsigned(row.GetValue<string>(5));
 		}
 		if (!row.IsNull(6)) {
-			stats.column_stats.push_back(GetStatsValue("column_size_bytes", row.GetValue<string>(6)));
+			stats.column_size_bytes = StringUtil::ToUnsigned(row.GetValue<string>(6));
 		}
 		if (!row.IsNull(7)) {
 			// Split the bbox struct into individual entries
@@ -705,18 +704,14 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 		}
 	}
 	// parse the per row-group stats
-	vector<DuckLakeColumnStats> row_group_stats_list;
-	for (auto &stats : column.column_stats) {
-		auto row_group_stats = DuckLakeInsert::ParseColumnStats(field_id.Type(), stats.column_stats);
-		row_group_stats_list.push_back(std::move(row_group_stats));
-	}
-	// merge all stats into the first one
-	for (idx_t i = 1; i < row_group_stats_list.size(); i++) {
-		row_group_stats_list[0].MergeStats(row_group_stats_list[i]);
-	}
-	// add the final stats of this column to the file
-	if (!row_group_stats_list.empty()) {
-		file.column_stats.emplace(field_id.GetFieldIndex(), std::move(row_group_stats_list[0]));
+	if (!column.column_stats.empty()) {
+		auto base_stats = column.column_stats[0];
+		base_stats.type = field_id.Type();
+		for (idx_t i = 1; i < column.column_stats.size(); i++) {
+			column.column_stats[i].type = field_id.Type();
+			base_stats.MergeStats(column.column_stats[i]);
+		}
+		file.column_stats.emplace(field_id.GetFieldIndex(), std::move(base_stats));
 	}
 	return map_entry;
 }
@@ -834,10 +829,24 @@ vector<DuckLakeDataFile> DuckLakeFileProcessor::AddFiles(const vector<string> &g
 	for (auto &glob : globs) {
 		// query the parquet_schema to figure out the schema for each of the columns
 		ReadParquetSchema(glob);
+
+		// turn off preserve_insertion_order to speed up the metadata queries, parquet_schema currently relies on
+		// ordered outputs
+		auto pres_false_res = transaction.Query("SET preserve_insertion_order=false");
+		if (pres_false_res->HasError()) {
+			pres_false_res->GetErrorObject().Throw("Failed to add data files to DuckLake: ");
+		}
+
 		// query the parquet_metadata to get the stats for each of the columns
 		ReadParquetStats(glob);
 		// read parquet file metadata
 		ReadParquetFileMetadata(glob);
+
+		// reset the setting
+		auto pres_true_res = transaction.Query("SET preserve_insertion_order=true");
+		if (pres_true_res->HasError()) {
+			pres_true_res->GetErrorObject().Throw("Failed to add data files to DuckLake: ");
+		}
 	}
 
 	// now we have obtained a list of files to add together with the relevant information (statistics, file size, ...)
