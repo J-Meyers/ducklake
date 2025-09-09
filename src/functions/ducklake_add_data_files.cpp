@@ -284,13 +284,42 @@ FROM parquet_metadata(%s)
 				auto &name = bbox_child_types[child_idx].first;
 				auto &value = bbox_child_values[child_idx];
 				if (!value.IsNull()) {
-					stats.column_stats.push_back(GetStatsValue("bbox_" + name, value));
+					if (name == "xmax") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.xmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "xmin") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.xmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "ymax") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.ymax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "ymin") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.ymin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "zmax") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.zmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "zmin") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.zmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "mmax") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.mmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else if (name == "mmin") {
+						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+						geo_stats.mmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+					} else {
+						throw InternalException("Unknown bbox child name %s", name);
+					}
 				}
 			}
 		}
 		if (!row.IsNull(8)) {
 			auto list_value = row.iterator.chunk->GetValue(8, row.row);
-			stats.column_stats.push_back(GetStatsValue("geo_types", std::move(list_value)));
+			auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+			for (const auto &child : ListValue::GetChildren(list_value)) {
+				geo_stats.geo_types.insert(StringValue::Get(child));
+			}
 		}
 
 		column.column_stats.push_back(std::move(stats));
