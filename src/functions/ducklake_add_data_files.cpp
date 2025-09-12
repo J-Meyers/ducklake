@@ -141,15 +141,9 @@ inline DuckLakeColumnGeoStats &MaybeInitializeStats(DuckLakeColumnStats &stats) 
 
 void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
-WITH base AS (
-  SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
-  FROM parquet_schema(%s)
-),
-ordered AS (SELECT *, row_number() OVER () AS rn FROM base),
-partitioned AS (SELECT * EXCLUDE (rn), row_number() OVER (PARTITION BY file_name ORDER BY rn) - 1 AS flattened_column_id FROM ordered)
-SELECT * EXCLUDE (flattened_column_id)
-FROM partitioned
-ORDER BY file_name, flattened_column_id;
+SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
+FROM parquet_schema(%s)
+ORDER BY file_name, flattened_column_id
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
@@ -244,8 +238,8 @@ ORDER BY file_name, flattened_column_id;
 
 void DuckLakeFileProcessor::ReadParquetStats(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
-SELECT file_name, column_id, coalesce(stats_min, stats_min_value), coalesce(stats_max, stats_max_value), stats_null_count, total_compressed_size, geo_bbox, geo_types
-FROM parquet_metadata(%s)
+SELECT file_name, column_id, min_value, max_value, null_count_total, total_compressed_size, geo_bbox, geo_types
+FROM parquet_column_metadata(%s)
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
@@ -732,10 +726,7 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 	if (!column.column_stats.empty()) {
 		auto base_stats = column.column_stats[0];
 		base_stats.type = field_id.Type();
-		for (idx_t i = 1; i < column.column_stats.size(); i++) {
-			column.column_stats[i].type = field_id.Type();
-			base_stats.MergeStats(column.column_stats[i]);
-		}
+		D_ASSERT(column.column_stats.size() == 1);
 		file.column_stats.emplace(field_id.GetFieldIndex(), std::move(base_stats));
 	}
 	return map_entry;
