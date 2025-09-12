@@ -132,7 +132,7 @@ private:
 	unordered_map<string, unique_ptr<ParquetFileMetadata>> parquet_files;
 };
 
-inline DuckLakeColumnGeoStats& MaybeInitializeStats(DuckLakeColumnStats &stats) {
+inline DuckLakeColumnGeoStats &MaybeInitializeStats(DuckLakeColumnStats &stats) {
 	if (!stats.extra_stats) {
 		stats.extra_stats = make_uniq<DuckLakeColumnGeoStats>();
 	}
@@ -141,8 +141,15 @@ inline DuckLakeColumnGeoStats& MaybeInitializeStats(DuckLakeColumnStats &stats) 
 
 void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
-SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
-FROM parquet_schema(%s)
+WITH base AS (
+  SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
+  FROM parquet_schema(%s)
+),
+ordered AS (SELECT *, row_number() OVER () AS rn FROM base),
+partitioned AS (SELECT * EXCLUDE (rn), row_number() OVER (PARTITION BY file_name ORDER BY rn) - 1 AS flattened_column_id FROM ordered)
+SELECT * EXCLUDE (flattened_column_id)
+FROM partitioned
+ORDER BY file_name, flattened_column_id;
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
