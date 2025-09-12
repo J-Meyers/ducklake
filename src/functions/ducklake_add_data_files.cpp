@@ -132,6 +132,13 @@ private:
 	unordered_map<string, unique_ptr<ParquetFileMetadata>> parquet_files;
 };
 
+inline DuckLakeColumnGeoStats& MaybeInitializeStats(DuckLakeColumnStats &stats) {
+	if (!stats.extra_stats) {
+		stats.extra_stats = make_uniq<DuckLakeColumnGeoStats>();
+	}
+	return stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+}
+
 void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
 SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
@@ -281,29 +288,22 @@ FROM parquet_metadata(%s)
 				auto &name = bbox_child_types[child_idx].first;
 				auto &value = bbox_child_values[child_idx];
 				if (!value.IsNull()) {
+					auto &geo_stats = MaybeInitializeStats(stats);
 					if (name == "xmax") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.xmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "xmin") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.xmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "ymax") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.ymax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "ymin") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.ymin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "zmax") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.zmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "zmin") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.zmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "mmax") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.mmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "mmin") {
-						auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 						geo_stats.mmin = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else {
 						throw InternalException("Unknown bbox child name %s", name);
@@ -313,7 +313,7 @@ FROM parquet_metadata(%s)
 		}
 		if (!row.IsNull(7)) {
 			auto list_value = row.iterator.chunk->GetValue(7, row.row);
-			auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
+			auto &geo_stats = MaybeInitializeStats(stats);
 			for (const auto &child : ListValue::GetChildren(list_value)) {
 				geo_stats.geo_types.insert(StringValue::Get(child));
 			}
