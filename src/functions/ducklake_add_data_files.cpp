@@ -88,6 +88,12 @@ struct ParquetColumn {
 	vector<unique_ptr<ParquetColumn>> child_columns;
 };
 
+struct HivePartition {
+	FieldIndex field_index;
+	LogicalType field_type;
+	Value hive_value;
+};
+
 struct ParquetFileMetadata {
 	string filename;
 	vector<unique_ptr<ParquetColumn>> columns;
@@ -95,6 +101,13 @@ struct ParquetFileMetadata {
 	optional_idx row_count;
 	optional_idx file_size_bytes;
 	optional_idx footer_size;
+
+	// Store the column mapping entries once they are computed
+	vector<unique_ptr<DuckLakeNameMapEntry>> map_entries;
+	// Map from parquet column to the corresponding field ID and type
+	unordered_map<idx_t, pair<FieldIndex, LogicalType>> column_id_to_field_map;
+	// Map from field ID to hive partition statistics (for partition columns)
+	vector<HivePartition> hive_partition_values;
 };
 
 struct DuckLakeFileProcessor {
@@ -112,13 +125,15 @@ private:
 	void ReadParquetFileMetadata(const string &glob);
 	DuckLakeDataFile AddFileToTable(ParquetFileMetadata &file);
 	unique_ptr<DuckLakeNameMapEntry> MapColumn(ParquetFileMetadata &file_metadata, ParquetColumn &column,
-	                                           const DuckLakeFieldId &field_id, DuckLakeDataFile &file, string prefix);
+	                                           const DuckLakeFieldId &field_id, string prefix);
 	vector<unique_ptr<DuckLakeNameMapEntry>> MapColumns(ParquetFileMetadata &file,
 	                                                    vector<unique_ptr<ParquetColumn>> &parquet_columns,
 	                                                    const vector<unique_ptr<DuckLakeFieldId>> &field_ids,
-	                                                    DuckLakeDataFile &result, const string &prefix = string());
+	                                                    const string &prefix = string());
+	void MapColumnStats(ParquetFileMetadata &file_metadata, DuckLakeDataFile &result);
 	unique_ptr<DuckLakeNameMapEntry> MapHiveColumn(ParquetFileMetadata &file_metadata, const DuckLakeFieldId &field_id,
-	                                               DuckLakeDataFile &result, const Value &hive_value);
+	                                               const Value &hive_value);
+	void DetermineMapping(ParquetFileMetadata &file);
 
 	void CheckMatchingType(const LogicalType &type, ParquetColumn &column);
 
@@ -131,13 +146,6 @@ private:
 	HivePartitioningType hive_partitioning;
 	unordered_map<string, unique_ptr<ParquetFileMetadata>> parquet_files;
 };
-
-inline DuckLakeColumnGeoStats &MaybeInitializeStats(DuckLakeColumnStats &stats) {
-	if (!stats.extra_stats) {
-		stats.extra_stats = make_uniq<DuckLakeColumnGeoStats>();
-	}
-	return stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
-}
 
 void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
@@ -167,6 +175,7 @@ ORDER BY file_name, flattened_column_id;
 				throw InvalidInputException("child_counts provided by parquet_schema are unaligned");
 			}
 			if (file) {
+				DetermineMapping(*file);
 				auto &filename = file->filename;
 				parquet_files.emplace(filename, std::move(file));
 			}
@@ -237,6 +246,7 @@ ORDER BY file_name, flattened_column_id;
 		}
 	}
 	if (file) {
+		DetermineMapping(*file);
 		auto &filename = file->filename;
 		parquet_files.emplace(filename, std::move(file));
 	}
@@ -266,7 +276,15 @@ FROM parquet_metadata(%s)
 			throw InvalidInputException("Column id not found in Parquet map?");
 		}
 		auto &column = column_entry->second.get();
-		DuckLakeColumnStats stats(LogicalType::SQLNULL); // FIXME: Use the correct type here
+		const auto &column_field_entry = parquet_file->column_id_to_field_map.find(column_id);
+		if (column_field_entry == parquet_file->column_id_to_field_map.end()) {
+			// We've already verified that this file has a mapping for all existing columns in the table, if this one
+			// doesn't
+			//  have a mapping then it must not correspond to any table column so we can skip it
+			continue;
+		}
+		auto &column_field = column_field_entry->second;
+		DuckLakeColumnStats stats(column_field.second);
 
 		if (!row.IsNull(2)) {
 			stats.has_min = true;
@@ -295,7 +313,7 @@ FROM parquet_metadata(%s)
 				auto &name = bbox_child_types[child_idx].first;
 				auto &value = bbox_child_values[child_idx];
 				if (!value.IsNull()) {
-					auto &geo_stats = MaybeInitializeStats(stats);
+					auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 					if (name == "xmax") {
 						geo_stats.xmax = value.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
 					} else if (name == "xmin") {
@@ -320,7 +338,7 @@ FROM parquet_metadata(%s)
 		}
 		if (!row.IsNull(7)) {
 			auto list_value = row.iterator.chunk->GetValue(7, row.row);
-			auto &geo_stats = MaybeInitializeStats(stats);
+			auto &geo_stats = stats.extra_stats->Cast<DuckLakeColumnGeoStats>();
 			for (const auto &child : ListValue::GetChildren(list_value)) {
 				geo_stats.geo_types.insert(StringValue::Get(child));
 			}
@@ -688,8 +706,7 @@ void DuckLakeParquetTypeChecker::CheckMatchingType() {
 
 unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMetadata &file_metadata,
                                                                   ParquetColumn &column,
-                                                                  const DuckLakeFieldId &field_id,
-                                                                  DuckLakeDataFile &file, string prefix) {
+                                                                  const DuckLakeFieldId &field_id, string prefix) {
 	// check if types of the columns are compatible
 	DuckLakeParquetTypeChecker type_checker(table, file_metadata, field_id.Type(), column, prefix);
 	type_checker.CheckMatchingType();
@@ -702,13 +719,17 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 	auto map_entry = make_uniq<DuckLakeNameMapEntry>();
 	map_entry->source_name = column.name;
 	map_entry->target_field_id = field_id.GetFieldIndex();
+
+	// Store the mapping from column to field for later statistics processing
+	file_metadata.column_id_to_field_map.emplace(column.column_id,
+	                                             make_pair(field_id.GetFieldIndex(), field_id.Type()));
+
 	// recursively remap children (if any)
 	if (field_id.HasChildren()) {
 		auto &field_children = field_id.Children();
 		switch (field_id.Type().id()) {
 		case LogicalTypeId::STRUCT:
-			map_entry->child_entries =
-			    MapColumns(file_metadata, column.child_columns, field_id.Children(), file, prefix);
+			map_entry->child_entries = MapColumns(file_metadata, column.child_columns, field_id.Children(), prefix);
 			break;
 		case LogicalTypeId::LIST:
 			// for lists we don't need to do any name mapping - the child element always maps to each other
@@ -716,28 +737,19 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 			// (2) Parquet has a different convention on how to name list children - rename them to "list" here
 			column.child_columns[0]->child_columns[0]->name = "list";
 			map_entry->child_entries.push_back(
-			    MapColumn(file_metadata, *column.child_columns[0]->child_columns[0], *field_children[0], file, prefix));
+			    MapColumn(file_metadata, *column.child_columns[0]->child_columns[0], *field_children[0], prefix));
 			break;
 		case LogicalTypeId::MAP:
 			// for maps we don't need to do any name mapping - the child elements are always key/value
 			// (1) Parquet has an extra element in between the list and its child ("REPEATED") - strip it
 			map_entry->child_entries =
-			    MapColumns(file_metadata, column.child_columns[0]->child_columns, field_id.Children(), file, prefix);
+			    MapColumns(file_metadata, column.child_columns[0]->child_columns, field_id.Children(), prefix);
 			break;
 		default:
 			throw InvalidInputException("Unsupported nested type %s for add files", field_id.Type());
 		}
 	}
-	// parse the per row-group stats
-	if (!column.column_stats.empty()) {
-		auto base_stats = column.column_stats[0];
-		base_stats.type = field_id.Type();
-		for (idx_t i = 1; i < column.column_stats.size(); i++) {
-			column.column_stats[i].type = field_id.Type();
-			base_stats.MergeStats(column.column_stats[i]);
-		}
-		file.column_stats.emplace(field_id.GetFieldIndex(), std::move(base_stats));
-	}
+
 	return map_entry;
 }
 
@@ -750,7 +762,7 @@ static bool SupportsHivePartitioning(const LogicalType &type) {
 
 unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapHiveColumn(ParquetFileMetadata &file_metadata,
                                                                       const DuckLakeFieldId &field_id,
-                                                                      DuckLakeDataFile &file, const Value &hive_value) {
+                                                                      const Value &hive_value) {
 	auto &target_type = field_id.Type();
 	auto target_field_id = field_id.GetFieldIndex();
 
@@ -765,13 +777,9 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapHiveColumn(ParquetFil
 		                            "be cast to the column type \"%s\"",
 		                            field_id.Name(), hive_value.ToString(), field_id.Type());
 	}
-	// push stats for the partitioned column
-	DuckLakeColumnStats column_stats(field_id.Type());
-	column_stats.min = column_stats.max = hive_value.ToString();
-	column_stats.has_min = column_stats.has_max = true;
-	column_stats.has_null_count = true;
 
-	file.column_stats.emplace(target_field_id, std::move(column_stats));
+	// Store the hive partition information for later statistics processing
+	file_metadata.hive_partition_values.emplace_back(HivePartition {target_field_id, field_id.Type(), hive_value});
 
 	// return the map - the name is empty on purpose to signal this comes from a partition
 	auto result = make_uniq<DuckLakeNameMapEntry>();
@@ -781,9 +789,47 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapHiveColumn(ParquetFil
 	return result;
 }
 
-vector<unique_ptr<DuckLakeNameMapEntry>> DuckLakeFileProcessor::MapColumns(
-    ParquetFileMetadata &file_metadata, vector<unique_ptr<ParquetColumn>> &parquet_columns,
-    const vector<unique_ptr<DuckLakeFieldId>> &field_ids, DuckLakeDataFile &result, const string &prefix) {
+void DuckLakeFileProcessor::MapColumnStats(ParquetFileMetadata &file_metadata, DuckLakeDataFile &result) {
+	// Process statistics for regular parquet columns
+	for (auto &entry : file_metadata.column_id_to_field_map) {
+		auto column_id = entry.first;
+		const auto &column_entry = file_metadata.column_id_map.find(column_id);
+		if (column_entry == file_metadata.column_id_map.end()) {
+			// Column not found because it's either not mapped to any table column or it's a nested column
+			continue;
+		}
+		auto &column = column_entry->second.get();
+		auto field_index = entry.second.first;
+		auto &field_type = entry.second.second;
+
+		if (!column.column_stats.empty()) {
+			auto base_stats = column.column_stats[0];
+			for (idx_t i = 1; i < column.column_stats.size(); i++) {
+				base_stats.MergeStats(column.column_stats[i]);
+			}
+			result.column_stats.emplace(field_index, std::move(base_stats));
+		}
+	}
+
+	// Process statistics for hive partition columns
+	for (auto &entry : file_metadata.hive_partition_values) {
+		auto field_index = entry.field_index;
+		auto &field_type = entry.field_type;
+		auto &hive_value = entry.hive_value;
+
+		DuckLakeColumnStats column_stats(field_type);
+		column_stats.min = column_stats.max = hive_value.ToString();
+		column_stats.has_min = column_stats.has_max = true;
+		column_stats.has_null_count = true;
+
+		result.column_stats.emplace(field_index, std::move(column_stats));
+	}
+}
+
+vector<unique_ptr<DuckLakeNameMapEntry>>
+DuckLakeFileProcessor::MapColumns(ParquetFileMetadata &file_metadata,
+                                  vector<unique_ptr<ParquetColumn>> &parquet_columns,
+                                  const vector<unique_ptr<DuckLakeFieldId>> &field_ids, const string &prefix) {
 	// create a top-level map of columns
 	case_insensitive_map_t<const_reference<DuckLakeFieldId>> field_id_map;
 	for (auto &field_id : field_ids) {
@@ -802,7 +848,7 @@ vector<unique_ptr<DuckLakeNameMapEntry>> DuckLakeFileProcessor::MapColumns(
 			                            prefix.empty() ? prefix : prefix + ".", col->name, file_metadata.filename,
 			                            table.name);
 		}
-		column_maps.push_back(MapColumn(file_metadata, *col, entry->second.get(), result, prefix));
+		column_maps.push_back(MapColumn(file_metadata, *col, entry->second.get(), prefix));
 		field_id_map.erase(entry);
 	}
 	for (auto &entry : field_id_map) {
@@ -811,7 +857,7 @@ vector<unique_ptr<DuckLakeNameMapEntry>> DuckLakeFileProcessor::MapColumns(
 		auto hive_entry = hive_partitions.find(field_id.Name());
 		if (hive_entry != hive_partitions.end()) {
 			// the column exists in the hive partitions - check if the type matches
-			column_maps.push_back(MapHiveColumn(file_metadata, field_id, result, Value(hive_entry->second)));
+			column_maps.push_back(MapHiveColumn(file_metadata, field_id, Value(hive_entry->second)));
 			continue;
 		}
 		// column does not exist - check if we are ignoring missing columns
@@ -825,6 +871,15 @@ vector<unique_ptr<DuckLakeNameMapEntry>> DuckLakeFileProcessor::MapColumns(
 	return column_maps;
 }
 
+void DuckLakeFileProcessor::DetermineMapping(ParquetFileMetadata &file) {
+	if (hive_partitioning != HivePartitioningType::NO) {
+		// we are mapping hive partitions - check if there are any hive partitioned columns
+		hive_partitions = HivePartitioning::Parse(file.filename);
+	}
+
+	file.map_entries = MapColumns(file, file.columns, table.GetFieldData().GetFieldIds());
+}
+
 DuckLakeDataFile DuckLakeFileProcessor::AddFileToTable(ParquetFileMetadata &file) {
 	DuckLakeDataFile result;
 	result.file_name = file.filename;
@@ -832,17 +887,10 @@ DuckLakeDataFile DuckLakeFileProcessor::AddFileToTable(ParquetFileMetadata &file
 	result.file_size_bytes = file.file_size_bytes.GetIndex();
 	result.footer_size = file.footer_size.GetIndex();
 
-	// map columns from the file to the table
-	const auto &field_data = table.GetFieldData();
-	auto &field_ids = field_data.GetFieldIds();
-	if (hive_partitioning != HivePartitioningType::NO) {
-		// we are mapping hive partitions - check if there are any hive partitioned columns
-		hive_partitions = HivePartitioning::Parse(file.filename);
-	}
-
 	auto name_map = make_uniq<DuckLakeNameMap>();
 	name_map->table_id = table.GetTableId();
-	name_map->column_maps = MapColumns(file, file.columns, field_ids, result);
+	MapColumnStats(file, result);
+	name_map->column_maps = std::move(file.map_entries);
 
 	// we successfully mapped this file - register the name map and refer to it in the file
 	result.mapping_id = transaction.AddNameMap(std::move(name_map));
