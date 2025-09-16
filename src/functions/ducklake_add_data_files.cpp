@@ -743,13 +743,6 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 			throw InvalidInputException("Unsupported nested type %s for add files", field_id.Type());
 		}
 	}
-	// parse the per row-group stats
-	if (!column.column_stats.empty()) {
-		auto base_stats = column.column_stats[0];
-		base_stats.type = field_id.Type();
-		D_ASSERT(column.column_stats.size() == 1);
-		file.column_stats.emplace(field_id.GetFieldIndex(), std::move(base_stats));
-	}
 	return map_entry;
 }
 
@@ -804,9 +797,7 @@ void DuckLakeFileProcessor::MapColumnStats(ParquetFileMetadata &file_metadata, D
 
 		if (!column.column_stats.empty()) {
 			auto base_stats = column.column_stats[0];
-			for (idx_t i = 1; i < column.column_stats.size(); i++) {
-				base_stats.MergeStats(column.column_stats[i]);
-			}
+			D_ASSERT(column.column_stats.size() == 1);
 			result.column_stats.emplace(field_index, std::move(base_stats));
 		}
 	}
