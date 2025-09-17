@@ -151,7 +151,7 @@ void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
 SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
 FROM parquet_schema(%s)
-ORDER BY file_name, flattened_column_id
+ORDER BY file_name, column_id
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
