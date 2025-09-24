@@ -121,3 +121,24 @@ query II
 EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE d >= DATE '2011-05-29' AND k < 50000;
 ----
 analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# OR filters
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i=527 OR i=100527;
+----
+2
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i=527 OR i=100527;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i in (500, 600, 700);
+----
+3
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i IN (500, 600, 700);
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*

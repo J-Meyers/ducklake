@@ -16,6 +16,8 @@
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/null_filter.hpp"
+#include "duckdb/planner/filter/optional_filter.hpp"
+#include "duckdb/planner/filter/in_filter.hpp"
 #include "storage/ducklake_table_entry.hpp"
 
 namespace duckdb {
@@ -219,7 +221,26 @@ string GenerateFilterPushdown(const TableFilter &filter, unordered_set<string> &
 		}
 		return result;
 	}
-	// FIXME: we probably want to support IN filters as well here
+	case TableFilterType::OPTIONAL_FILTER: {
+		auto &optional_filter = filter.Cast<OptionalFilter>();
+		return GenerateFilterPushdown(*optional_filter.child_filter, referenced_stats);
+	}
+	case TableFilterType::IN_FILTER: {
+		auto &in_filter = filter.Cast<InFilter>();
+		string result;
+		for (auto &value : in_filter.values) {
+			if (!result.empty()) {
+				result += " OR ";
+			}
+			auto temporary_constant_filter = ConstantFilter(ExpressionType::COMPARE_EQUAL, value);
+			auto next_filter = GenerateFilterPushdown(temporary_constant_filter, referenced_stats);
+			if (next_filter.empty()) {
+				return string();
+			}
+			result += next_filter;
+		}
+		return result;
+	}
 	default:
 		// unsupported filter
 		return string();
