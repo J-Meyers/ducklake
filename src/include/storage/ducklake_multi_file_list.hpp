@@ -63,6 +63,8 @@ private:
 	void GetTableInsertions();
 	void GetTableDeletions();
 
+	string GenerateSimpleDynamicFilterPushDownQuery(const vector<column_t> &column_ids, TableFilterSet &filters) const;
+
 private:
 	mutex file_lock;
 	DuckLakeFunctionInfo &read_info;
