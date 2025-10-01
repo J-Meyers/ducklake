@@ -260,13 +260,8 @@ ORDER BY file_name, flattened_column_id;
 
 void DuckLakeFileProcessor::ReadParquetStats(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
-<<<<<<< HEAD
 SELECT file_name, column_id, min_value, max_value, null_count_total, total_compressed_size, geo_bbox, geo_types
 FROM parquet_column_metadata(%s)
-=======
-SELECT file_name, column_id, coalesce(stats_min, stats_min_value), coalesce(stats_max, stats_max_value), stats_null_count, total_compressed_size, geo_bbox, geo_types
-FROM parquet_metadata(%s)
->>>>>>> complex_pushdown_filter
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
