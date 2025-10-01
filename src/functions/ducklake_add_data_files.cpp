@@ -149,21 +149,9 @@ private:
 
 void DuckLakeFileProcessor::ReadParquetSchema(const string &glob) {
 	auto result = transaction.Query(StringUtil::Format(R"(
-<<<<<<< HEAD
 SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
 FROM parquet_schema(%s)
 ORDER BY file_name, column_id
-=======
-WITH base AS (
-  SELECT file_name, name, type, num_children, converted_type, scale, precision, field_id, logical_type
-  FROM parquet_schema(%s)
-),
-ordered AS (SELECT *, row_number() OVER () AS rn FROM base),
-partitioned AS (SELECT * EXCLUDE (rn), row_number() OVER (PARTITION BY file_name ORDER BY rn) - 1 AS flattened_column_id FROM ordered)
-SELECT * EXCLUDE (flattened_column_id)
-FROM partitioned
-ORDER BY file_name, flattened_column_id;
->>>>>>> complex_pushdown_filter
 )",
 	                                                   SQLString(glob)));
 	if (result->HasError()) {
@@ -813,13 +801,7 @@ void DuckLakeFileProcessor::MapColumnStats(ParquetFileMetadata &file_metadata, D
 
 		if (!column.column_stats.empty()) {
 			auto base_stats = column.column_stats[0];
-<<<<<<< HEAD
 			D_ASSERT(column.column_stats.size() == 1);
-=======
-			for (idx_t i = 1; i < column.column_stats.size(); i++) {
-				base_stats.MergeStats(column.column_stats[i]);
-			}
->>>>>>> complex_pushdown_filter
 			result.column_stats.emplace(field_index, std::move(base_stats));
 		}
 	}
