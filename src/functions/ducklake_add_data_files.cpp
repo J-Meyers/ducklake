@@ -743,10 +743,6 @@ unique_ptr<DuckLakeNameMapEntry> DuckLakeFileProcessor::MapColumn(ParquetFileMet
 			throw InvalidInputException("Unsupported nested type %s for add files", field_id.Type());
 		}
 	}
-<<<<<<< HEAD
-=======
-
->>>>>>> complex_pushdown_filter
 	return map_entry;
 }
 
