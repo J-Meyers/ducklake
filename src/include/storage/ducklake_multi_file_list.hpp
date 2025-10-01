@@ -9,6 +9,8 @@
 #pragma once
 
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "storage/ducklake_scan.hpp"
 #include "storage/ducklake_transaction.hpp"
 #include "storage/ducklake_metadata_info.hpp"
@@ -25,7 +27,8 @@ class DuckLakeMultiFileList : public MultiFileList {
 
 public:
 	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, vector<DuckLakeDataFile> transaction_local_files,
-	                      shared_ptr<DuckLakeInlinedData> transaction_local_data, string filter = string());
+	                      shared_ptr<DuckLakeInlinedData> transaction_local_data, string filter = string(),
+	                      string cte_section = string());
 	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, vector<DuckLakeFileListEntry> files_to_scan);
 	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, const DuckLakeInlinedTableInfo &inlined_table);
 
@@ -62,8 +65,12 @@ private:
 	void GetFilesForTable();
 	void GetTableInsertions();
 	void GetTableDeletions();
+	unique_ptr<DuckLakeMultiFileList> CreateCopyWithDeferredEvaluation(ClientContext &context,
+	                                                                   const vector<column_t> &column_ids) const;
 
 private:
+	void EvaluateDeferredFilters();
+
 	mutex file_lock;
 	DuckLakeFunctionInfo &read_info;
 	//! The set of files to read
@@ -79,6 +86,20 @@ private:
 	vector<DuckLakeDeleteScanEntry> delete_scans;
 	//! The filter to apply
 	string filter;
+	//! CTE section for optimized filter queries
+	string cte_section;
+	//! Deferred filter evaluation state
+	mutable bool filters_evaluated = false;
+	//! Complex filters stored as vector of expressions for deferred evaluation
+	mutable vector<unique_ptr<Expression>> pending_complex_filters;
+	//! Dynamic filters stored as TableFilterSet for deferred evaluation
+	mutable TableFilterSet pending_dynamic_filters;
+	//! Column information for deferred filter evaluation
+	mutable vector<column_t> deferred_column_ids;
+	//! ClientContext for deferred filter evaluation
+	mutable ClientContext *deferred_context = nullptr;
+	//! Table filters that have already been processed by ComplexFilterPushdown
+	mutable TableFilterSet processed_table_filters;
 };
 
 } // namespace duckdb

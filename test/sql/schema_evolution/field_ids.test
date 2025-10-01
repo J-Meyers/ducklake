@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_field_ids.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_field_ids_files')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_field_ids_files')
 
 # insert into
 statement ok
@@ -21,7 +26,7 @@ statement ok
 CREATE TABLE ducklake.t2 AS SELECT 84 t2_c1, 'world' t2_c2
 
 query III
-SELECT name, type, field_id FROM parquet_schema('__TEST_DIR__/ducklake_field_ids_files/main/t1/*.parquet')
+SELECT name, type, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t1/*.parquet')
 WHERE name <> 'duckdb_schema'
 ORDER BY name
 ----
@@ -31,7 +36,7 @@ t1_c3	INT64	3
 
 
 query III
-SELECT name, type, field_id FROM parquet_schema('__TEST_DIR__/ducklake_field_ids_files/main/t2/*.parquet')
+SELECT name, type, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t2/*.parquet')
 WHERE name <> 'duckdb_schema'
 ORDER BY name
 ----
@@ -47,7 +52,7 @@ SELECT {'c1': 42, 'c2': {'n1': 84, 'n2': 32}} struct_col,
        {'l': [1,2,3], 'l2': 42, 'l3': {'x': 42, 'y': 84}} as struct_of_lists
 
 query II
-SELECT name, field_id FROM parquet_schema('__TEST_DIR__/ducklake_field_ids_files/main/t3/*.parquet')
+SELECT name, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t3/*.parquet')
 WHERE name <> 'duckdb_schema'
 ORDER BY name
 ----

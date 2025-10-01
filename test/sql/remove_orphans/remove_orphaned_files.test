@@ -9,8 +9,12 @@ require parquet
 require icu
 
 # partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/remove_orphaned_files.db' AS ducklake (DATA_PATH '__TEST_DIR__/remove_orphaned_files', METADATA_CATALOG 'ducklake_metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/remove_orphaned_files', METADATA_CATALOG 'ducklake_metadata')
 
 statement ok
 USE ducklake
@@ -29,11 +33,11 @@ CALL ducklake_merge_adjacent_files('ducklake');
 
 # Add orphaned file
 statement ok
-COPY test to '__TEST_DIR__/remove_orphaned_files/main/test/bla.parquet';
+COPY test to '${DATA_PATH}/remove_orphaned_files/main/test/bla.parquet';
 
 # We should have 3 files
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/remove_orphaned_files/main/test/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/remove_orphaned_files/main/test/*')
 ----
 4
 

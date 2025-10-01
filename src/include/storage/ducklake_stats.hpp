@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "common/ducklake_types.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -55,7 +56,7 @@ public:
 
 struct DuckLakeColumnStats {
 	explicit DuckLakeColumnStats(LogicalType type_p) : type(std::move(type_p)) {
-		if (type.id() == LogicalTypeId::BLOB && type.HasAlias() && type.GetAlias() == "GEOMETRY") {
+		if (DuckLakeTypes::IsGeoType(type)) {
 			extra_stats = make_uniq<DuckLakeColumnGeoStats>();
 		}
 	}

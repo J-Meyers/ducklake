@@ -612,13 +612,21 @@ static void ParsePartialFileInfo(DuckLakeSnapshot snapshot, const string &partia
 	}
 }
 
-vector<DuckLakeFileListEntry>
-DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot, const string &filter) {
+vector<DuckLakeFileListEntry> DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
+                                                                        DuckLakeSnapshot snapshot,
+                                                                        const string &cte_section,
+                                                                        const string &where_filter) {
 	auto table_id = table.GetTableId();
 	string select_list = GetFileSelectList("data") +
 	                     ", data.row_id_start, data.begin_snapshot, data.partial_file_info, data.mapping_id, " +
 	                     GetFileSelectList("del");
-	auto query = StringUtil::Format(R"(
+
+	string query;
+	if (!cte_section.empty()) {
+		query = cte_section;
+	}
+
+	query += StringUtil::Format(R"(
 SELECT %s
 FROM {METADATA_CATALOG}.ducklake_data_file data
 LEFT JOIN (
@@ -629,10 +637,12 @@ LEFT JOIN (
     ) del USING (data_file_id)
 WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_ID} < data.end_snapshot OR data.end_snapshot IS NULL)
 		)",
-	                                select_list, table_id.index, table_id.index);
-	if (!filter.empty()) {
-		query += "\nAND " + filter;
+	                            select_list, table_id.index, table_id.index);
+
+	if (!where_filter.empty()) {
+		query += "\nAND " + where_filter;
 	}
+
 	auto result = transaction.Query(snapshot, query);
 	if (result->HasError()) {
 		result->GetErrorObject().Throw("Failed to get data file list from DuckLake: ");
@@ -786,10 +796,17 @@ USING (data_file_id), (
 
 vector<DuckLakeFileListExtendedEntry> DuckLakeMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table,
                                                                                         DuckLakeSnapshot snapshot,
-                                                                                        const string &filter) {
+                                                                                        const string &cte_section,
+                                                                                        const string &where_filter) {
 	auto table_id = table.GetTableId();
 	string select_list = GetFileSelectList("data") + ", data.row_id_start, " + GetFileSelectList("del");
-	auto query = StringUtil::Format(R"(
+
+	string query;
+	if (!cte_section.empty()) {
+		query = cte_section;
+	}
+
+	query += StringUtil::Format(R"(
 SELECT data.data_file_id, del.delete_file_id, data.record_count, %s
 FROM {METADATA_CATALOG}.ducklake_data_file data
 LEFT JOIN (
@@ -800,9 +817,10 @@ LEFT JOIN (
     ) del USING (data_file_id)
 WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_ID} < data.end_snapshot OR data.end_snapshot IS NULL)
 		)",
-	                                select_list, table_id.index, table_id.index);
-	if (!filter.empty()) {
-		query += "\nAND " + filter;
+	                            select_list, table_id.index, table_id.index);
+
+	if (!where_filter.empty()) {
+		query += "\nAND " + where_filter;
 	}
 
 	auto result = transaction.Query(snapshot, query);
@@ -862,7 +880,7 @@ WITH snapshot_ranges AS (
 SELECT %s,
 FROM {METADATA_CATALOG}.ducklake_data_file data
 JOIN snapshot_ranges sr
-  ON data.begin_snapshot BETWEEN sr.begin_snapshot AND sr.end_snapshot
+  ON data.begin_snapshot >= sr.begin_snapshot AND data.begin_snapshot < sr.end_snapshot
 LEFT JOIN (
 	SELECT *
     FROM {METADATA_CATALOG}.ducklake_delete_file
@@ -1789,6 +1807,30 @@ SnapshotChangeInfo DuckLakeMetadataManager::GetChangesMadeAfterSnapshot(DuckLake
 	SnapshotChangeInfo change_info;
 	for (auto &row : *result) {
 		change_info.changes_made = row.GetValue<string>(0);
+	}
+	return change_info;
+}
+
+SnapshotDeletedFromFiles
+DuckLakeMetadataManager::GetFilesDeletedOrDroppedAfterSnapshot(DuckLakeSnapshot start_snapshot) {
+	// get all changes made to the system after the snapshot was started
+	auto result = transaction.Query(start_snapshot, R"(
+	SELECT data_file_id
+	FROM {METADATA_CATALOG}.ducklake_delete_file
+	WHERE begin_snapshot > {SNAPSHOT_ID}
+	UNION ALL
+	SELECT data_file_id
+	FROM {METADATA_CATALOG}.ducklake_data_file
+	WHERE end_snapshot IS NOT NULL AND end_snapshot > {SNAPSHOT_ID}
+	)");
+	if (result->HasError()) {
+		result->GetErrorObject().Throw(
+		    "Failed to commit DuckLake transaction - failed to get files with deletions for conflict resolution:");
+	}
+	// parse changes made by other transactions
+	SnapshotDeletedFromFiles change_info;
+	for (auto &row : *result) {
+		change_info.deleted_from_files.insert(DataFileIndex(row.GetValue<idx_t>(0)));
 	}
 	return change_info;
 }

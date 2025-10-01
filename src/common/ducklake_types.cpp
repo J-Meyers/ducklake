@@ -71,6 +71,36 @@ static string ToStringBaseType(const LogicalType &type) {
 	throw InvalidInputException("Failed to convert DuckDB type to DuckLake - unsupported type %s", type);
 }
 
+// Only GEOMETRY type needs special handling, to cast to WKB_BLOB
+bool DuckLakeTypes::IsGeoType(const LogicalType &type) {
+	return type.HasAlias() && StringUtil::CIEquals(type.GetAlias(), "GEOMETRY") &&
+	       (type.id() == LogicalTypeId::BLOB || type.id() == LogicalTypeId::USER);
+}
+
+bool DuckLakeTypes::RequiresCast(const LogicalType &type) {
+	return TypeVisitor::Contains(type, IsGeoType);
+}
+
+bool DuckLakeTypes::RequiresCast(const vector<LogicalType> &types) {
+	for (auto &type : types) {
+		if (RequiresCast(type)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+LogicalType DuckLakeTypes::GetCastedType(const LogicalType &type) {
+	return TypeVisitor::VisitReplace(type, [](const LogicalType &type) {
+		if (IsGeoType(type)) {
+			LogicalType wkb_type(LogicalTypeId::BLOB);
+			wkb_type.SetAlias("WKB_BLOB");
+			return wkb_type;
+		}
+		return type;
+	});
+}
+
 LogicalType DuckLakeTypes::FromString(const string &type) {
 	if (StringUtil::StartsWith(type, "decimal(") && StringUtil::EndsWith(type, ")")) {
 		// decimal - parse width/scale
@@ -91,7 +121,7 @@ string DuckLakeTypes::ToString(const LogicalType &type) {
 		if (type.IsJSONType()) {
 			return "json";
 		}
-		if (type.GetAlias() == "GEOMETRY" && type.id() == LogicalTypeId::BLOB) {
+		if (IsGeoType(type)) {
 			return "geometry";
 		}
 		throw InvalidInputException("Unsupported user-defined type");
@@ -120,6 +150,11 @@ void DuckLakeTypes::CheckSupportedType(const LogicalType &type) {
 		DuckLakeTypes::ToString(type);
 		return type;
 	});
+
+	// Special case for now, only allow GEOMETRY as top-level type
+	if (!IsGeoType(type) && TypeVisitor::Contains(type, IsGeoType)) {
+		throw InvalidInputException("GEOMETRY type is only supported as a top-level type");
+	}
 }
 
 } // namespace duckdb

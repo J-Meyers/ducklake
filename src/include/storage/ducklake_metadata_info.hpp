@@ -214,6 +214,10 @@ struct SnapshotChangeInfo {
 	string changes_made;
 };
 
+struct SnapshotDeletedFromFiles {
+	set<DataFileIndex> deleted_from_files;
+};
+
 struct DuckLakeSnapshotInfo {
 	idx_t id;
 	timestamp_tz_t time;

@@ -7,15 +7,19 @@ require parquet
 
 require spatial
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake.db' AS ducklake (
-	DATA_PATH '__TEST_DIR__/ducklake_files',
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (
+	DATA_PATH '${DATA_PATH}/ducklake_files',
 	METADATA_CATALOG 'ducklake_meta'
 )
 
 # Copy over a test parquet file with geometry column
 statement ok
-COPY (select st_point(5, 5) as g) TO '__TEST_DIR__/points.parquet' (FORMAT PARQUET);
+COPY (select st_point(5, 5) as g) TO '${DATA_PATH}/points.parquet' (FORMAT PARQUET);
 
 statement ok
 USE ducklake;
@@ -25,7 +29,7 @@ create table t1 (g GEOMETRY);
 
 # Now add the file
 statement ok
-CALL ducklake_add_data_files('ducklake', 't1', '__TEST_DIR__/points.parquet');
+CALL ducklake_add_data_files('ducklake', 't1', '${DATA_PATH}/points.parquet');
 
 query I
 select * from t1;

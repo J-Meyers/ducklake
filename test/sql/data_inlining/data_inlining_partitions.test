@@ -7,8 +7,13 @@ require ducklake
 require parquet
 
 # partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_inlining_partitions.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_inlining_partitions', METADATA_CATALOG 'ducklake_metadata', DATA_INLINING_ROW_LIMIT 1000)
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_partitions', METADATA_CATALOG 'ducklake_metadata', DATA_INLINING_ROW_LIMIT 1000)
 
 statement ok
 USE ducklake
@@ -28,7 +33,7 @@ endloop
 
 # all data is inlined
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_inlining_partitions/main/partitioned_tbl/**')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_partitions/main/partitioned_tbl/**')
 ----
 0
 
@@ -54,7 +59,7 @@ CALL ducklake_flush_inlined_data('ducklake')
 
 # we now have 14 files
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_inlining_partitions/main/partitioned_tbl/**')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_partitions/main/partitioned_tbl/**')
 ----
 14
 
@@ -77,7 +82,7 @@ SELECT COUNT(*) FROM partitioned_tbl WHERE year(ts) = 2021
 # verify the result data is partitioned
 query II
 SELECT regexp_extract(path, '.*year=([0-9]+)[/\\].*', 1)::INT AS year_part, regexp_extract(path, '.*month=([0-9]+)[/\\].*', 1)::INT AS month_part
-FROM glob('__TEST_DIR__/ducklake_inlining_partitions/**') t(path) ORDER BY ALL
+FROM glob('${DATA_PATH}/ducklake_inlining_partitions/**') t(path) ORDER BY ALL
 ----
 2020	1
 2020	2

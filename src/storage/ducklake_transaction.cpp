@@ -377,6 +377,7 @@ void DuckLakeTransaction::WriteSnapshotChanges(DuckLakeCommitState &commit_state
 
 void DuckLakeTransaction::CleanupFiles() {
 	// remove any files that were written
+	auto context_ref = context.lock();
 	auto &fs = FileSystem::GetFileSystem(db);
 	for (auto &entry : table_data_changes) {
 		auto &table_changes = entry.second;
@@ -416,7 +417,8 @@ void ConflictCheck(const string &source_name, const MAP &conflict_map, const cha
 }
 
 void DuckLakeTransaction::CheckForConflicts(const TransactionChangeInformation &changes,
-                                            const SnapshotChangeInformation &other_changes) {
+                                            const SnapshotChangeInformation &other_changes,
+                                            DuckLakeSnapshot transaction_snapshot) {
 	// check if we are dropping the same table as another transaction
 	for (auto &dropped_idx : changes.dropped_tables) {
 		ConflictCheck(dropped_idx, other_changes.dropped_tables, "drop table", "dropped it already");
@@ -476,8 +478,31 @@ void DuckLakeTransaction::CheckForConflicts(const TransactionChangeInformation &
 	for (auto &table_id : changes.tables_deleted_from) {
 		ConflictCheck(table_id, other_changes.dropped_tables, "delete from table", "dropped it");
 		ConflictCheck(table_id, other_changes.altered_tables, "delete from table", "altered it");
-		ConflictCheck(table_id, other_changes.tables_deleted_from, "delete from table", "deleted from it");
 		ConflictCheck(table_id, other_changes.tables_compacted, "delete from table", "compacted it");
+	}
+	if (!changes.tables_deleted_from.empty()) {
+		bool check_for_matches = false;
+		for (auto &table_id : changes.tables_deleted_from) {
+			if (other_changes.tables_deleted_from.find(table_id) != other_changes.tables_deleted_from.end()) {
+				check_for_matches = true;
+				break;
+			}
+		}
+		if (check_for_matches) {
+			// If we have deletes on the tables, check for files being deleted
+			const auto deleted_files = metadata_manager->GetFilesDeletedOrDroppedAfterSnapshot(transaction_snapshot);
+			for (auto &entry : table_data_changes) {
+				auto &table_changes = entry.second;
+				for (auto &file_entry : table_changes.new_delete_files) {
+					auto &file = file_entry.second;
+					ConflictCheck(file.data_file_id, deleted_files.deleted_from_files, "delete from file",
+					              "deleted from it");
+				}
+			}
+			for (auto &file : dropped_files) {
+				ConflictCheck(file.second, deleted_files.deleted_from_files, "delete from file", "deleted from it");
+			}
+		}
 	}
 	for (auto &table_id : changes.tables_deleted_inlined) {
 		ConflictCheck(table_id, other_changes.dropped_tables, "delete from table", "dropped it");
@@ -513,7 +538,7 @@ void DuckLakeTransaction::CheckForConflicts(DuckLakeSnapshot transaction_snapsho
 	auto other_changes = SnapshotChangeInformation::ParseChangesMade(changes_made.changes_made);
 
 	// now check for conflicts
-	CheckForConflicts(changes, other_changes);
+	CheckForConflicts(changes, other_changes, transaction_snapshot);
 }
 
 vector<DuckLakeSchemaInfo> DuckLakeTransaction::GetNewSchemas(DuckLakeCommitState &commit_state) {
@@ -1298,7 +1323,7 @@ CompactionInformation DuckLakeTransaction::GetCompactionChanges(DuckLakeSnapshot
 						throw InternalException("Only the first compacted file can have existing partial file info");
 					}
 					new_file.partial_file_info = compacted_file.partial_files;
-				} else {
+				} else if (compaction.source_files.size() > 1) {
 					DuckLakePartialFileInfo partial_info;
 					partial_info.snapshot_id = compacted_file.file.begin_snapshot;
 					partial_info.max_row_count = row_id_limit;
@@ -1596,12 +1621,13 @@ void DuckLakeTransaction::DropTransactionLocalFile(TableIndex table_id, const st
 	}
 	auto &table_changes = entry->second;
 	auto &table_files = table_changes.new_data_files;
+	auto context_ref = context.lock();
+	auto &fs = FileSystem::GetFileSystem(*context_ref);
 	for (idx_t i = 0; i < table_files.size(); i++) {
 		auto &file = table_files[i];
 		if (file.file_name == path) {
 			// found the file - delete it from the table list and from disk
 			table_files.erase_at(i);
-			auto &fs = FileSystem::GetFileSystem(db);
 			fs.RemoveFile(path);
 			if (table_changes.IsEmpty()) {
 				// no more files remaining
@@ -1733,8 +1759,9 @@ void DuckLakeTransaction::AddDeletes(TableIndex table_id, vector<DuckLakeDeleteF
 		}
 		auto existing_entry = table_delete_map.find(data_file_path);
 		if (existing_entry != table_delete_map.end()) {
+			auto context_ref = context.lock();
+			auto &fs = FileSystem::GetFileSystem(*context_ref);
 			// we have a transaction-local delete for this file already - delete it
-			auto &fs = FileSystem::GetFileSystem(db);
 			fs.RemoveFile(existing_entry->second.file_name);
 			// write the new file
 			existing_entry->second = std::move(file);
@@ -1787,7 +1814,8 @@ void DuckLakeTransaction::TransactionLocalDelete(TableIndex table_id, const stri
 		if (file.file_name == data_file_path) {
 			if (file.delete_file) {
 				// this file already has a transaction-local delete file - delete it
-				auto &fs = FileSystem::GetFileSystem(db);
+				auto context_ref = context.lock();
+				auto &fs = FileSystem::GetFileSystem(*context_ref);
 				fs.RemoveFile(file.delete_file->file_name);
 			}
 			file.delete_file = make_uniq<DuckLakeDeleteFile>(std::move(delete_file));
@@ -1838,7 +1866,8 @@ void DuckLakeTransaction::DropTable(DuckLakeTableEntry &table) {
 		auto table_entry = table_data_changes.find(table_id);
 		if (table_entry != table_data_changes.end()) {
 			auto &table_changes = table_entry->second;
-			auto &fs = FileSystem::GetFileSystem(db);
+			auto context_ref = context.lock();
+			auto &fs = FileSystem::GetFileSystem(*context_ref);
 			for (auto &file : table_changes.new_data_files) {
 				fs.RemoveFile(file.file_name);
 			}

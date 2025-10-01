@@ -1,0 +1,25 @@
+{
+  "description": "Run DuckLake tests using MinIO.",
+  "on_init": "CREATE SECRET (TYPE S3, KEY_ID 'admin', SECRET 'password', ENDPOINT '127.0.0.1:9000', URL_STYLE 'path', USE_SSL 0); SET timezone = 'UTC';",
+  "autoloading": "all",
+  "test_env": [{
+      "env_name":  "DATA_PATH",
+      "env_value": "s3://mybucket"
+   }],
+  "skip_error_messages": ["this_is_not_allowed_to_be_empty"],
+  "statically_loaded_extensions": [
+    "core_functions",
+    "parquet",
+    "icu",
+    "httpfs",
+    "json"
+  ],   "skip_tests": [
+   {
+      "reason": "Extension Loading tests, not relevant to remote files.",
+      "paths": [
+        "test/sql/general/missing_parquet.test",
+        "test/sql/autoloading/autoload_data_path.test"
+      ]
+    }
+  ]
+}

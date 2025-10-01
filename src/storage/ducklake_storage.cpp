@@ -51,6 +51,8 @@ static void HandleDuckLakeOption(DuckLakeOptions &options, const string &option,
 		options.create_if_not_exists = BooleanValue::Get(value.DefaultCastAs(LogicalType::BOOLEAN));
 	} else if (lcase == "migrate_if_required") {
 		options.migrate_if_required = BooleanValue::Get(value.DefaultCastAs(LogicalType::BOOLEAN));
+	} else if (lcase == "busy_timeout") {
+		options.busy_timeout = UBigIntValue::Get(value.DefaultCastAs(LogicalType::UBIGINT));
 	} else {
 		throw NotImplementedException("Unsupported option %s for DuckLake", option);
 	}
@@ -108,6 +110,7 @@ static unique_ptr<Catalog> DuckLakeAttach(optional_ptr<StorageExtensionInfo> sto
 		attach_options.access_mode = AccessMode::READ_ONLY;
 		db.SetReadOnlyDatabase();
 	}
+	attach_options.options["busy_timeout"] = Value::INTEGER(options.busy_timeout);
 	return make_uniq<DuckLakeCatalog>(db, std::move(options));
 }
 

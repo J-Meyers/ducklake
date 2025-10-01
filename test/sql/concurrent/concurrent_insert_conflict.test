@@ -11,8 +11,14 @@ require parquet
 # Some problem with file-system on Windows
 require notwindows
 
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_concurrent_insert.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_concurrent_insert_files')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_concurrent_insert_files')
 
 statement ok
 SET ducklake_retry_wait_ms=100

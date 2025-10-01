@@ -9,8 +9,13 @@ require parquet
 statement ok
 SET preserve_insertion_order=false;
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_compaction.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_compaction_files', METADATA_CATALOG 'xx')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_files', METADATA_CATALOG 'xx')
 
 # snapshot 1
 statement ok
@@ -45,7 +50,7 @@ statement ok
 INSERT INTO ducklake.test VALUES (5);
 
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_compaction_files/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
 ----
 6
 
@@ -67,7 +72,7 @@ CALL ducklake_merge_adjacent_files('ducklake');
 # files are not immediately deleted - but are added to the deletion queue
 # we actually gain a file here
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_compaction_files/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
 ----
 7
 
@@ -89,7 +94,7 @@ SELECT COUNT(*) FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true,
 
 # now the files are gone
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_compaction_files/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
 ----
 2
 

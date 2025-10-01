@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_compaction_mix.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_compaction_mix_files', METADATA_CATALOG 'metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_mix_files', METADATA_CATALOG 'metadata')
 
 # set target file size very small
 statement ok
@@ -58,7 +63,7 @@ SELECT rowid, snapshot_id, * FROM ducklake.tbl WHERE snapshot_id NOT IN (3, 6) O
 
 # we should have 7 files now
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_compaction_mix_files/**/*.parquet')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
 ----
 7
 
@@ -71,7 +76,7 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 # now we should have 3 files
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_compaction_mix_files/**/*.parquet')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
 ----
 3
 

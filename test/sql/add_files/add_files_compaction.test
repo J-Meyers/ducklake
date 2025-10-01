@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_add_files_compaction.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_add_files_compaction/')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_files_compaction/')
 
 # snapshot 1
 statement ok
@@ -29,15 +34,15 @@ INSERT INTO ducklake.test2 VALUES (42);
 loop i 2 6
 
 statement ok
-COPY (SELECT ${i} AS i) TO '__TEST_DIR__/ducklake_add_files_compaction/my_file${i}.parquet';
+COPY (SELECT ${i} AS i) TO '${DATA_PATH}/ducklake_add_files_compaction/my_file${i}.parquet';
 
 statement ok
-CALL ducklake_add_data_files('ducklake', 'test', '__TEST_DIR__/ducklake_add_files_compaction/my_file${i}.parquet')
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/ducklake_add_files_compaction/my_file${i}.parquet')
 
 endloop
 
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_add_files_compaction/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_add_files_compaction/**/*')
 ----
 6
 
@@ -59,7 +64,7 @@ CALL ducklake_merge_adjacent_files('ducklake');
 # files are not immediately deleted - but are added to the deletion queue
 # we actually gain a file here
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_add_files_compaction/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_add_files_compaction/**/*')
 ----
 7
 
@@ -81,7 +86,7 @@ SELECT COUNT(*) FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true,
 
 # now the files are gone
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_add_files_compaction/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_add_files_compaction/**/*')
 ----
 2
 

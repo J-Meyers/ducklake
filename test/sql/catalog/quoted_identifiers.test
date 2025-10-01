@@ -9,8 +9,13 @@ require parquet
 # windows doesn't like these paths
 require notwindows
 
+# SQLite databases do not support creating new schemas
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake ''quoted'' "db".db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake ''quoted'' "path"', METADATA_CATALOG '''quoted'' catalog "name"', METADATA_SCHEMA '''quoted'' catalog "schema"')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}''quoted'' "db".db' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake ''quoted'' "path"', METADATA_CATALOG '''quoted'' catalog "name"', METADATA_SCHEMA '''quoted'' catalog "schema"')
 
 statement ok
 CREATE TABLE ducklake."quoted 'table' ""name"""("quoted 'column' ""name""" INTEGER);

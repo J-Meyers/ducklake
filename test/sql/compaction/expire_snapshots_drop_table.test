@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_expire_snapshots_drop_table.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_expire_snapshots_drop_table_files', METADATA_CATALOG 'metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_expire_snapshots_drop_table_files', METADATA_CATALOG 'metadata')
 
 # delete all values in a table
 # snapshot 1
@@ -32,7 +37,7 @@ DROP TABLE ducklake.test
 
 # we have 3 files now (insert from snapshot 2, delete from snapshot 3, delete from snapshot 4)
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_expire_snapshots_drop_table_files/main/test/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
 ----
 3
 
@@ -45,7 +50,7 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 # the deletes from snapshot 3 should now be gone
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_expire_snapshots_drop_table_files/main/test/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
 ----
 2
 
@@ -58,7 +63,7 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 # verify that all files are actually gone
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_expire_snapshots_drop_table_files/main/test/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
 ----
 0
 

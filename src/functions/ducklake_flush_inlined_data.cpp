@@ -195,7 +195,7 @@ unique_ptr<LogicalOperator> DuckLakeDataFlusher::GenerateFlushCommand() {
 
 	// Add another projection with casts if necessary
 	root->ResolveOperatorTypes();
-	if (DuckLakeInsert::RequireCasts(root->types)) {
+	if (DuckLakeTypes::RequiresCast(root->types)) {
 		root = DuckLakeInsert::InsertCasts(binder, root);
 	}
 

@@ -69,7 +69,6 @@ public:
 		return true;
 	}
 
-	static bool RequireCasts(const vector<LogicalType> &types);
 	static void InsertCasts(const vector<LogicalType> &types, ClientContext &context, PhysicalPlanGenerator &planner,
 	                        optional_ptr<PhysicalOperator> &plan);
 	static unique_ptr<LogicalOperator> InsertCasts(Binder &binder, unique_ptr<LogicalOperator> &plan);

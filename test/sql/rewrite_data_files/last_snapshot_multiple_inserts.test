@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_multiple_inserts.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_multiple_inserts', METADATA_CATALOG 'ducklake_metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_multiple_inserts', METADATA_CATALOG 'ducklake_metadata')
 
 statement ok
 USE ducklake
@@ -49,7 +54,7 @@ DELETE FROM test
 WHERE key  > 200 and key < 250;
 
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_multiple_inserts/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_multiple_inserts/**/*')
 ----
 7
 
@@ -61,7 +66,7 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 # Add one Remove one, same stuff
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_multiple_inserts/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_multiple_inserts/**/*')
 ----
 7
 

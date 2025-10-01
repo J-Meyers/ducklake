@@ -77,10 +77,15 @@ vector<idx_t> DuckLakeDeleteFilter::ScanDeleteFile(ClientContext &context, const
 
 	auto bind_data = parquet_scan.bind(context, bind_input, return_types, return_names);
 
-	if (return_types.size() != 2 || return_types[0].id() != LogicalTypeId::VARCHAR ||
-	    return_types[1].id() != LogicalTypeId::BIGINT) {
-		throw InvalidInputException("Invalid schema contained in the delete file %s - expected file_name/position",
-		                            delete_file.path);
+	bool not_duckdb = return_types.size() != 2 || return_types[0].id() != LogicalTypeId::VARCHAR ||
+	                  return_types[1].id() != LogicalTypeId::BIGINT;
+	bool not_iceberg = return_types.size() != 3 || return_types[0].id() != LogicalTypeId::VARCHAR ||
+	                   return_types[1].id() != LogicalTypeId::BIGINT;
+
+	if (not_duckdb && not_iceberg) {
+		throw InvalidInputException(
+		    "Invalid schema contained in the delete file %s - expected file_name/position/row[optional]",
+		    delete_file.path);
 	}
 
 	DataChunk scan_chunk;

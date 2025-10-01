@@ -470,7 +470,7 @@ static void GeneratePartitionExpressions(ClientContext &context, DuckLakeCopyInp
 		virtual_column_count = 0;
 		break;
 	}
-	// if we have partition columns that are NOT identity we need to compute them separately, and NOT write them
+	// if we have partition columns that are NOT identity, we need to compute them separately, and NOT write them
 	idx_t partition_column_start = copy_input.columns.PhysicalColumnCount() + virtual_column_count;
 	for (idx_t part_idx = 0; part_idx < copy_input.partition_data->fields.size(); part_idx++) {
 		copy_options.partition_columns.push_back(partition_column_start++);
@@ -578,11 +578,8 @@ DuckLakeCopyOptions DuckLakeInsert::GetCopyOptions(ClientContext &context, DuckL
 
 	vector<LogicalType> casted_types;
 	for (const auto &type : types_to_write) {
-		if (type.id() == LogicalTypeId::BLOB && type.HasAlias() && type.GetAlias() == "GEOMETRY") {
-			// we write GEOMETRY as WKB_BLOB
-			LogicalType wkb_type(LogicalTypeId::BLOB);
-			wkb_type.SetAlias("WKB_BLOB");
-			casted_types.push_back(wkb_type);
+		if (DuckLakeTypes::RequiresCast(type)) {
+			casted_types.push_back(DuckLakeTypes::GetCastedType(type));
 		} else {
 			casted_types.push_back(type);
 		}
@@ -637,27 +634,15 @@ static void GenerateProjection(ClientContext &context, PhysicalPlanGenerator &pl
 	plan = proj;
 }
 
-bool DuckLakeInsert::RequireCasts(const vector<LogicalType> &types) {
-	for (auto &expected_type : types) {
-		if (expected_type.id() == LogicalTypeId::BLOB && expected_type.HasAlias() &&
-		    expected_type.GetAlias() == "GEOMETRY") {
-			return true;
-		}
-	}
-	return false;
-}
-
 void DuckLakeInsert::InsertCasts(const vector<LogicalType> &types, ClientContext &context,
                                  PhysicalPlanGenerator &planner, optional_ptr<PhysicalOperator> &plan) {
 	vector<unique_ptr<Expression>> expressions;
 	idx_t col_idx = 0;
 	for (auto &expected_type : types) {
 		auto expr = make_uniq<BoundReferenceExpression>(expected_type, col_idx++);
-		if (expected_type.id() == LogicalTypeId::BLOB && expected_type.HasAlias() &&
-		    expected_type.GetAlias() == "GEOMETRY") {
-			LogicalType wkb_type(LogicalTypeId::BLOB);
-			wkb_type.SetAlias("WKB_BLOB");
-			expressions.push_back(BoundCastExpression::AddCastToType(context, std::move(expr), wkb_type));
+		if (DuckLakeTypes::RequiresCast(expected_type)) {
+			auto new_type = DuckLakeTypes::GetCastedType(expected_type);
+			expressions.push_back(BoundCastExpression::AddCastToType(context, std::move(expr), new_type));
 		} else {
 			expressions.push_back(std::move(expr));
 		}
@@ -675,11 +660,10 @@ unique_ptr<LogicalOperator> DuckLakeInsert::InsertCasts(Binder &binder, unique_p
 		auto &type = types[col_idx];
 		auto &binding = bindings[col_idx];
 		auto ref_expr = make_uniq<BoundColumnRefExpression>(type, binding);
-		if (type.id() == LogicalTypeId::BLOB && type.HasAlias() && type.GetAlias() == "GEOMETRY") {
-			LogicalType wkb_type(LogicalTypeId::BLOB);
-			wkb_type.SetAlias("WKB_BLOB");
+		if (DuckLakeTypes::RequiresCast(type)) {
+			auto new_type = DuckLakeTypes::GetCastedType(type);
 			cast_expressions.push_back(
-			    BoundCastExpression::AddCastToType(binder.context, std::move(ref_expr), wkb_type));
+			    BoundCastExpression::AddCastToType(binder.context, std::move(ref_expr), new_type));
 		} else {
 			cast_expressions.push_back(std::move(ref_expr));
 		}
@@ -702,11 +686,21 @@ PhysicalOperator &DuckLakeInsert::PlanCopyForInsert(ClientContext &context, Phys
 		GenerateProjection(context, planner, copy_options.projection_list, plan);
 	}
 
-	if (RequireCasts(copy_options.expected_types)) {
+	if (DuckLakeTypes::RequiresCast(copy_options.expected_types)) {
 		// Insert a cast projection
-		InsertCasts(copy_options.expected_types, context, planner, plan);
-		// Update the expected types to match the casted types
-		copy_options.expected_types = plan->types;
+		if (plan) {
+			InsertCasts(copy_options.expected_types, context, planner, plan);
+			// Update the expected types to match the cast types
+			copy_options.expected_types = plan->types;
+		} else {
+			// Still update types. If there is no child-plan node, we expect that whoever inserts chunks (e.g.
+			// DuckLakeUpdate, DuckLakeMergeInsert) directly into the physical copy operator will pre-cast the data.
+			for (auto &type : copy_options.expected_types) {
+				if (DuckLakeTypes::RequiresCast(type)) {
+					type = DuckLakeTypes::GetCastedType(type);
+				}
+			}
+		}
 	}
 
 	auto copy_return_types = GetCopyFunctionReturnLogicalTypes(CopyFunctionReturnType::WRITTEN_FILE_STATISTICS);

@@ -11,8 +11,13 @@ require tpch
 statement ok
 CALL dbgen(sf=1);
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_partition_tpch.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_partition_tpch', METADATA_CATALOG 'ducklake_metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partition_tpch', METADATA_CATALOG 'ducklake_metadata')
 
 statement ok
 COPY FROM DATABASE memory TO ducklake (SCHEMA)
@@ -30,17 +35,17 @@ statement ok
 COPY FROM DATABASE memory TO ducklake (DATA)
 
 query I
-SELECT COUNT(*) FROM glob('__TEST_DIR__/ducklake_partition_tpch/main/lineitem/**')
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_partition_tpch/main/lineitem/**')
 ----
 84
 
 query I
-SELECT COUNT(*) FROM glob('__TEST_DIR__/ducklake_partition_tpch/main/orders/**')
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_partition_tpch/main/orders/**')
 ----
 9
 
 query I
-SELECT COUNT(*) FROM glob('__TEST_DIR__/ducklake_partition_tpch/main/part/**')
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_partition_tpch/main/part/**')
 ----
 5
 

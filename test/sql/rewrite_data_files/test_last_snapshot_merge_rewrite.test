@@ -6,8 +6,13 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_last_merge_rewrite.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_last_merge_rewrite', METADATA_CATALOG 'ducklake_metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_last_merge_rewrite', METADATA_CATALOG 'ducklake_metadata')
 
 statement ok
 USE ducklake
@@ -52,13 +57,13 @@ WHERE key  > 200 and key < 250;
 
 skipif i=1
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 7
 
 skipif i=0
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 14
 
@@ -76,13 +81,13 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 skipif i=0
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 14
 
 skipif i=1
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 7
 
@@ -96,13 +101,13 @@ CALL ducklake_merge_adjacent_files('ducklake');
 
 skipif i=0
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 15
 
 skipif i=1
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 7
 
@@ -111,13 +116,13 @@ CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
 
 skipif i=1
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 7
 
 skipif i=0
 query I
-SELECT COUNT(*) FROM GLOB('__TEST_DIR__/ducklake_last_merge_rewrite/**/*')
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_last_merge_rewrite/**/*')
 ----
 14
 

@@ -8,8 +8,12 @@ require parquet
 
 require icu
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/compaction_cleanup_global.db' AS ducklake (DATA_PATH '__TEST_DIR__/compaction_cleanup_global', METADATA_CATALOG 'metadata')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/compaction_cleanup_global', METADATA_CATALOG 'metadata')
 
 statement ok
 CREATE TABLE ducklake.test(i INTEGER)

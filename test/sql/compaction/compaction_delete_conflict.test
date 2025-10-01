@@ -6,8 +6,14 @@ require ducklake
 
 require parquet
 
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_conflicts_compaction.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_conflicts_compaction_files')
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflicts_compaction_files')
 
 statement ok
 SET immediate_transaction_mode=true

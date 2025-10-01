@@ -6,18 +6,23 @@ require ducklake
 
 require parquet
 
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
 statement ok
-ATTACH 'ducklake:__TEST_DIR__/ducklake_add_files_rename.db' AS ducklake
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_files_rename')
 
 statement ok
 CREATE TABLE ducklake.test(col1 INTEGER, col2 VARCHAR);
 
 # write a parquet file outside of DuckLake
 statement ok
-COPY (SELECT 100 col1, 'world' col2) TO '__TEST_DIR__/rename_file.parquet';
+COPY (SELECT 100 col1, 'world' col2) TO '${DATA_PATH}/rename_file.parquet';
 
 statement ok
-CALL ducklake_add_data_files('ducklake', 'test', '__TEST_DIR__/rename_file.parquet')
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/rename_file.parquet')
 
 query II
 SELECT col1, col2 FROM ducklake.test
