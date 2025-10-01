@@ -721,7 +721,7 @@ string GenerateFilterPushdown(const TableFilter &filter, unordered_set<string> &
 			if (next_filter.empty()) {
 				return string();
 			}
-			result += next_filter;
+			result += "(" + next_filter + ")";
 		}
 		return result;
 	}
