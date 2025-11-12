@@ -626,13 +626,21 @@ static void ParsePartialFileInfo(DuckLakeSnapshot snapshot, const string &partia
 	}
 }
 
-vector<DuckLakeFileListEntry>
-DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot, const string &filter) {
+vector<DuckLakeFileListEntry> DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
+                                                                        DuckLakeSnapshot snapshot,
+                                                                        const string &cte_section,
+                                                                        const string &where_filter) {
 	auto table_id = table.GetTableId();
 	string select_list = GetFileSelectList("data") +
 	                     ", data.row_id_start, data.begin_snapshot, data.partial_file_info, data.mapping_id, " +
 	                     GetFileSelectList("del");
-	auto query = StringUtil::Format(R"(
+
+	string query;
+	if (!cte_section.empty()) {
+		query = cte_section;
+	}
+
+	query += StringUtil::Format(R"(
 SELECT %s
 FROM {METADATA_CATALOG}.ducklake_data_file data
 LEFT JOIN (
@@ -643,10 +651,12 @@ LEFT JOIN (
     ) del USING (data_file_id)
 WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_ID} < data.end_snapshot OR data.end_snapshot IS NULL)
 		)",
-	                                select_list, table_id.index, table_id.index);
-	if (!filter.empty()) {
-		query += "\nAND " + filter;
+	                            select_list, table_id.index, table_id.index);
+
+	if (!where_filter.empty()) {
+		query += "\nAND " + where_filter;
 	}
+
 	auto result = transaction.Query(snapshot, query);
 	if (result->HasError()) {
 		result->GetErrorObject().Throw("Failed to get data file list from DuckLake: ");
@@ -800,10 +810,17 @@ USING (data_file_id), (
 
 vector<DuckLakeFileListExtendedEntry> DuckLakeMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table,
                                                                                         DuckLakeSnapshot snapshot,
-                                                                                        const string &filter) {
+                                                                                        const string &cte_section,
+                                                                                        const string &where_filter) {
 	auto table_id = table.GetTableId();
 	string select_list = GetFileSelectList("data") + ", data.row_id_start, " + GetFileSelectList("del");
-	auto query = StringUtil::Format(R"(
+
+	string query;
+	if (!cte_section.empty()) {
+		query = cte_section;
+	}
+
+	query += StringUtil::Format(R"(
 SELECT data.data_file_id, del.delete_file_id, data.record_count, %s
 FROM {METADATA_CATALOG}.ducklake_data_file data
 LEFT JOIN (
@@ -814,9 +831,10 @@ LEFT JOIN (
     ) del USING (data_file_id)
 WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_ID} < data.end_snapshot OR data.end_snapshot IS NULL)
 		)",
-	                                select_list, table_id.index, table_id.index);
-	if (!filter.empty()) {
-		query += "\nAND " + filter;
+	                            select_list, table_id.index, table_id.index);
+
+	if (!where_filter.empty()) {
+		query += "\nAND " + where_filter;
 	}
 
 	auto result = transaction.Query(snapshot, query);
@@ -1159,8 +1177,8 @@ void DuckLakeMetadataManager::WriteNewInlinedTables(DuckLakeSnapshot commit_snap
 	string inlined_tables;
 	string inlined_table_queries;
 	for (auto &table : new_tables) {
-		if (catalog.DataInliningRowLimit(table.schema_id, table.id) == 0 || table.id.IsTransactionLocal()) {
-			// not inlining for this table or inlining is for a table on this transaction, hence handled there - skip it
+		if (catalog.DataInliningRowLimit(table.schema_id, table.id) == 0) {
+			// not inlining for this table - skip it
 			continue;
 		}
 		GetInlinedTableQueries(commit_snapshot, table, inlined_tables, inlined_table_queries);
@@ -2496,21 +2514,12 @@ WHERE snapshot_id IN (%s);
 	// get a list of tables that are no longer required after these deletions
 	result = transaction.Query(R"(
 SELECT table_id
-FROM {METADATA_CATALOG}.ducklake_table t
-WHERE end_snapshot IS NOT NULL AND NOT EXISTS (
+FROM {METADATA_CATALOG}.ducklake_table
+WHERE end_snapshot IS NOT NULL AND NOT EXISTS(
     SELECT snapshot_id
     FROM {METADATA_CATALOG}.ducklake_snapshot
     WHERE snapshot_id >= begin_snapshot AND snapshot_id < end_snapshot
-)
-AND NOT EXISTS (
-    SELECT 1
-    FROM {METADATA_CATALOG}.ducklake_table t2
-    WHERE t2.table_id = t.table_id
-      AND (t2.end_snapshot IS NULL OR  EXISTS (SELECT snapshot_id
-    FROM {METADATA_CATALOG}.ducklake_snapshot
-    WHERE  snapshot_id >= begin_snapshot AND snapshot_id < t2.end_snapshot))
-  );)");
-
+);)");
 	vector<TableIndex> cleanup_tables;
 	for (auto &row : *result) {
 		cleanup_tables.push_back(TableIndex(row.GetValue<idx_t>(0)));
